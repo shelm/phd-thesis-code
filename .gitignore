@@ -89,3 +89,5 @@ utils/augmentation_utils.py
 utils/config_utils.py
 utils/preprocess_utils.py
 utils/run_utils.py
+/.configs/nova/nova_db.cfg
+/.configs/
