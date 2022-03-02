@@ -232,7 +232,7 @@ for csv_file in prediction_path.glob("*.csv"):
         role=role,
         scheme_name="emotion_categorical",
         items=emotions_cat_items,
-        out_dir=".",
+        out_dir=dataset_root / session,
     )
 
     exit()
@@ -244,7 +244,7 @@ for csv_file in prediction_path.glob("*.csv"):
         scheme_type="POINT",
         sr=25,
         num=4,
-        out_dir=".",
+        out_dir=dataset_root / session,
     )
     to_nova(
         df_lm,
@@ -254,7 +254,7 @@ for csv_file in prediction_path.glob("*.csv"):
         scheme_type="POINT",
         sr=25,
         num=68,
-        out_dir=".",
+        out_dir=dataset_root / session,
     )
     to_nova(
         df_valence,
