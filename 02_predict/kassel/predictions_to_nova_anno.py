@@ -151,9 +151,10 @@ def expand_bb_points(upper_left, lower_right):
 
 for csv_file in prediction_path.glob("*.csv"):
     print(f"Converting {csv_file}")
-    df = pd.read_csv(csv_file)
+    df = pd.read_csv(csv_file, low_memory=False)
 
     # Cateogorical Expression
+    print("\t Categorical Emotions...")
     df_expression = df["expression"]
     df_expression = df_expression.str.split(
         ";", len(emotions_cat_items), expand=True
@@ -161,8 +162,8 @@ for csv_file in prediction_path.glob("*.csv"):
 
     # Apply temporal smoothing as done in the emonet code.
     # Note: In the emonet code this is done before the softmax application, but we do not have this information anymore.
-    tw = [0.1, 0.1, 0.15, 0.25, 0.4]
-    df_expression = df_expression.rolling(len(tw)).apply(lambda x: np.sum(tw * x))
+    tw = np.array([0.1, 0.1, 0.15, 0.25, 0.4], dtype=np.float64)
+    df_expression = df_expression.rolling(len(tw)).apply(lambda x: np.sum(tw * x), raw=True)
     df_expression = df_expression.fillna(-1)
     df_expression = pd.concat(
         [df_expression.idxmax(axis=1).astype(int), df_expression.max(axis=1)], axis=1
@@ -179,9 +180,12 @@ for csv_file in prediction_path.glob("*.csv"):
     df_expression["start"] = df_expression["index"]["min"].divide(25)
     df_expression["end"] = df_expression["index"]["max"].divide(25)
     df_expression["id"] = df_expression["id"].astype(int)
+    print("\t ...done")
 
 
     # Valence / Arousal
+    print("\t Valence / Arousal...")
+
     df_valence = pd.DataFrame()
     # if prediction does not exist we add confidence zero
     df_valence["score"] = df["valence"].fillna(0)
@@ -191,8 +195,12 @@ for csv_file in prediction_path.glob("*.csv"):
     # if prediction does not exist we add confidence zero
     df_arousal["score"] = df["arousal"].fillna(0)
     df_arousal["conf"] = df["arousal"].notnull().astype(int)
+    print("\t ...done")
+
 
     # Preprocess bounding boxes
+    print("\t Bounding Boxes...")
+
     df_bb = pd.concat([df["face_upper_left"], df["face_lower_right"]], axis=1).fillna(
         "-1;-1"
     )
@@ -208,8 +216,12 @@ for csv_file in prediction_path.glob("*.csv"):
         ).to_list()
     )
     df_bb = df_bb.rename(index={x: f"Frame {x+1}" for x in df_bb.index})
+    print("\t ...done")
+
 
     # Preprocess Landmarks
+    print("\t Facial Landmarks...")
+
     n_landmarks = 68
     df_lm = df["facial_landmarks"].fillna(";".join(["-1"] * n_landmarks * 2))
     df_lm = df_lm.str.split(";", n_landmarks * 2, expand=True).astype(int)
@@ -222,6 +234,8 @@ for csv_file in prediction_path.glob("*.csv"):
     np_lm = np.stack((i, x, y, c)).swapaxes(0, -1).swapaxes(0, 1)
     df_lm = pd.DataFrame(map(lambda x: tuple(x), np_lm))
     df_lm = df_lm.applymap(lambda x: tuple(x.astype(int)))
+    print("\t ...done")
+
 
     # Saving annotations in nova format
     session, role = csv_file.stem.split(".")[0].split("-")
