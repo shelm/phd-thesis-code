@@ -12,7 +12,22 @@ cfg_ds = cfg["DATASET"]
 
 # Paths
 dataset_root = Path(cfg_ds.get("nova_data_dir")) / cfg_ds.get("dataset")
-prediction_path = dataset_root / Path('scripts/emonet/predictions')
+prediction_path = dataset_root / Path("scripts/emonet/predictions")
+
+# Emotion Map
+emotions_cat_items = [
+    ("neutral", "0", "#FF000000"),
+    ("happy", "1", "#FF000000"),
+    ("sad", "2", "#FF000000"),
+    ("suprise", "3", "#FF000000"),
+    ("fear", "4", "#FF000000"),
+    ("disgust", "5", "#FF000000"),
+    ("anger", "6", "#FF000000"),
+    ("contempt", "7", "#FF000000"),
+    # ('none', '8', '#FF000000'),
+    # ('uncertain', '9', '#FF000000'),
+    # ('non-face', '10', '#FF000000')
+]
 
 
 def to_nova(
@@ -21,7 +36,6 @@ def to_nova(
     role: str = "role",
     scheme_name: str = "scheme_name",
     scheme_type: str = "DISCRETE",
-
     # Continuous
     sr: int = 25,
     min_val: int = -1,
@@ -30,9 +44,10 @@ def to_nova(
     max_color: str = "#FF4F81BD",
     color: str = "#FF008000",
     out_dir: str = ".",
-
     # Point
-    num: int = 0
+    num: int = 0,
+    # Discrete
+    items: list = None,  # [('<label_name>',  '<label_id>', '<label_color>')...]
 ):
     # Header
     header_template = """
@@ -40,7 +55,7 @@ def to_nova(
     <annotation ssi-v="3">
     <info ftype="ASCII" size="0"/>
     <meta annotator="" role=""/> 
-    <scheme name="valence" type="CONTINUOUS" sr="25" min="-1" max="1" mincolor="#FFFFFFFF" maxcolor="#FF4F81BD" color="#FF008000"/>
+    <scheme />
     </annotation>"""
 
     header_dom = et.ElementTree(et.fromstring(header_template.strip()))
@@ -65,8 +80,13 @@ def to_nova(
         scheme.set("max_color", max_color)
 
     elif scheme_type == "DISCRETE":
-        # TODO
-        raise NotImplementedError
+        scheme.set("color", "#FFFFFFFF")
+        for n, i, c in items:
+            child = et.SubElement(scheme, "item")
+            child.set("name", n)
+            child.set("id", i)
+            child.set("color", c)
+
     elif scheme_type == "FREE":
         # TODO#
         raise NotImplementedError
@@ -109,27 +129,59 @@ def to_nova(
         )
 
     elif scheme_type == "POINT":
-        with out_path_data.open('w', encoding="utf-8") as csvfile:
-            spamwriter = csv.writer(csvfile, delimiter=';', )
+        with out_path_data.open("w", encoding="utf-8") as csvfile:
+            spamwriter = csv.writer(
+                csvfile,
+                delimiter=";",
+            )
             for index, row in data.iterrows():
                 new_row = []
                 for col in row:
-                    new_row.append(str(col).replace(',', ':').replace(' ', ''))
-                spamwriter.writerow([index] + new_row + ['1'])
+                    new_row.append(str(col).replace(",", ":").replace(" ", ""))
+                spamwriter.writerow([index] + new_row + ["1"])
 
 
 def expand_bb_points(upper_left, lower_right):
-    
-    x1,y1 = [int(x) for x in upper_left.split(';')]
-    x2,y2 = [int(x) for x in lower_right.split(';')]
 
-    return (x1,y1), (x1,y2), (x2,y1), (x2,y2)
+    x1, y1 = [int(x) for x in upper_left.split(";")]
+    x2, y2 = [int(x) for x in lower_right.split(";")]
+
+    return (x1, y1), (x1, y2), (x2, y1), (x2, y2)
 
 
 for csv_file in prediction_path.glob("*.csv"):
-    print(f'Converting {csv_file}')
+    print(f"Converting {csv_file}")
     df = pd.read_csv(csv_file)
 
+    # Cateogorical Expression
+    df_expression = df["expression"]
+    df_expression = df_expression.str.split(
+        ";", len(emotions_cat_items), expand=True
+    ).astype(float)
+
+    # Apply temporal smoothing as done in the emonet code.
+    # Note: In the emonet code this is done before the softmax application, but we do not have this information anymore.
+    tw = [0.1, 0.1, 0.15, 0.25, 0.4]
+    df_expression = df_expression.rolling(len(tw)).apply(lambda x: np.sum(tw * x))
+    df_expression = df_expression.fillna(-1)
+    df_expression = pd.concat(
+        [df_expression.idxmax(axis=1).astype(int), df_expression.max(axis=1)], axis=1
+    )
+    df_expression.columns = ["id", "conf"]
+    # Setting garbage labels
+    df_expression.loc[df_expression["conf"] == -1] = -1
+    df_expression = df_expression.reset_index()
+
+    # Convert to sparse data
+    df_expression = df_expression.groupby(
+        [(df_expression["id"] != df_expression["id"].shift()).cumsum()]
+    ).agg({"index": ["min", "max"], "id": "mean", "conf": "mean"})
+    df_expression["start"] = df_expression["index"]["min"].divide(25)
+    df_expression["end"] = df_expression["index"]["max"].divide(25)
+    df_expression["id"] = df_expression["id"].astype(int)
+
+
+    # Valence / Arousal
     df_valence = pd.DataFrame()
     # if prediction does not exist we add confidence zero
     df_valence["score"] = df["valence"].fillna(0)
@@ -141,17 +193,26 @@ for csv_file in prediction_path.glob("*.csv"):
     df_arousal["conf"] = df["arousal"].notnull().astype(int)
 
     # Preprocess bounding boxes
-    df_bb = pd.concat([df["face_upper_left"], df["face_lower_right"]], axis=1).fillna('-1;-1')
-    df_bb = pd.DataFrame(df_bb.apply(
-        lambda x: [(i+1,) + p +(1,) for i,p in enumerate(expand_bb_points(x["face_upper_left"], x["face_lower_right"]))],
-        axis=1
-    ).to_list())
-    df_bb = df_bb.rename( index={x: f'Frame {x+1}' for x in df_bb.index} )
+    df_bb = pd.concat([df["face_upper_left"], df["face_lower_right"]], axis=1).fillna(
+        "-1;-1"
+    )
+    df_bb = pd.DataFrame(
+        df_bb.apply(
+            lambda x: [
+                (i + 1,) + p + (1,)
+                for i, p in enumerate(
+                    expand_bb_points(x["face_upper_left"], x["face_lower_right"])
+                )
+            ],
+            axis=1,
+        ).to_list()
+    )
+    df_bb = df_bb.rename(index={x: f"Frame {x+1}" for x in df_bb.index})
 
     # Preprocess Landmarks
     n_landmarks = 68
-    df_lm = df["facial_landmarks"].fillna(";".join(["-1"] * n_landmarks * 2) )
-    df_lm = df_lm.str.split(';', n_landmarks * 2, expand=True).astype(int)
+    df_lm = df["facial_landmarks"].fillna(";".join(["-1"] * n_landmarks * 2))
+    df_lm = df_lm.str.split(";", n_landmarks * 2, expand=True).astype(int)
 
     # Looooots of reshaping
     x = df_lm[list(df_lm.columns[0::2])].values
@@ -162,32 +223,56 @@ for csv_file in prediction_path.glob("*.csv"):
     df_lm = pd.DataFrame(map(lambda x: tuple(x), np_lm))
     df_lm = df_lm.applymap(lambda x: tuple(x.astype(int)))
 
-    #df_lm[df_lm.columns[0::2]].combine(df_lm[df_lm.columns[1::2]], lambda s1, s2: s1 + s2)
-    #df_lm = pd.DataFrame([df_lm[i].str.cat(df_lm[i+1], sep=';') for i in range(0,len(df_lm.columns),2)]).transpose()
-    #df_lm = pd.
-    #df_lm = pd.DataFrame(df_lm.index // 2))
+    # Saving annotations in nova format
+    session, role = csv_file.stem.split(".")[0].split("-")
 
-    # expression
-    df_expression = df["expression"]
-    df_expression = df_expression.fillna("-1;-1")
-    df_expression = df_expression.astype(str).apply(
-        lambda x: (
-            np.argmax([float(y) for y in x.split(";")]),
-            np.amax([float(y) for y in x.split(";")]),
-        )
-    )  # if it works, it works!
-    df_expression = pd.DataFrame(df_expression.tolist(), index=df.index)
+    to_nova(
+        df_expression,
+        annotator="emonet",
+        role=role,
+        scheme_name="emotion_categorical",
+        items=emotions_cat_items,
+        out_dir=".",
+    )
 
-    # potentially apply temporal smoothing?
-    # also group labels together and add duration
-    # TODO
+    exit()
+    to_nova(
+        df_bb,
+        annotator="emonet",
+        role=role,
+        scheme_name="bounding_box",
+        scheme_type="POINT",
+        sr=25,
+        num=4,
+        out_dir=".",
+    )
+    to_nova(
+        df_lm,
+        annotator="emonet",
+        role=role,
+        scheme_name="facial_landmarks",
+        scheme_type="POINT",
+        sr=25,
+        num=68,
+        out_dir=".",
+    )
+    to_nova(
+        df_valence,
+        annotator="emonet",
+        role=role,
+        scheme_name="valence25",
+        scheme_type="CONTINUOUS",
+        sr=25,
+        out_dir=dataset_root / session,
+    )
+    to_nova(
+        df_arousal,
+        annotator="emonet",
+        role=role,
+        scheme_name="arousal25",
+        scheme_type="CONTINUOUS",
+        sr=25,
+        out_dir=dataset_root / session,
+    )
 
-    # saving annotations in nova format
-    session, role = csv_file.stem.split('.')[0].split('-')
-
-    #to_nova(df_bb, annotator='emonet', role=role, scheme_name='bounding_box', scheme_type='POINT', sr=25, num=4, out_dir='.')
-    to_nova(df_lm, annotator='emonet', role=role, scheme_name='facial_landmarks', num=68, scheme_type='POINT', sr=25, out_dir='.')
-    #to_nova(df_valence, annotator='emonet', role=role, scheme_name='valence25', scheme_type='CONTINUOUS', sr=25, out_dir=dataset_root / session)
-    #to_nova(df_arousal, annotator='emonet', role=role, scheme_name='arousal25', scheme_type='CONTINUOUS', sr=25, out_dir=dataset_root / session)
-
-    print(f'... done.')
+    print(f"... done.")
