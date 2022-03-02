@@ -235,7 +235,6 @@ for csv_file in prediction_path.glob("*.csv"):
         out_dir=dataset_root / session,
     )
 
-    exit()
     to_nova(
         df_bb,
         annotator="emonet",
