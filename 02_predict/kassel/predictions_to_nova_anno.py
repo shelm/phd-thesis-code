@@ -74,8 +74,8 @@ def to_nova(
 
     if scheme_type == "CONTINUOUS":
         scheme.set("sr", str(sr))
-        scheme.set("min_val", str(min_val))
-        scheme.set("max_val", str(max_val))
+        scheme.set("min", str(min_val))
+        scheme.set("max", str(max_val))
         scheme.set("min_color", min_color)
         scheme.set("max_color", max_color)
 
@@ -238,7 +238,7 @@ for csv_file in prediction_path.glob("*.csv"):
 
 
     # Saving annotations in nova format
-    session, role = csv_file.stem.split(".")[0].split("-")
+    session, role = csv_file.stem.split(".")[0].rsplit("-", 1)
 
     to_nova(
         df_expression,
