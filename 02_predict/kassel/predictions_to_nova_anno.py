@@ -163,7 +163,9 @@ for csv_file in prediction_path.glob("*.csv"):
     # Apply temporal smoothing as done in the emonet code.
     # Note: In the emonet code this is done before the softmax application, but we do not have this information anymore.
     tw = np.array([0.1, 0.1, 0.15, 0.25, 0.4], dtype=np.float64)
-    df_expression = df_expression.rolling(len(tw)).apply(lambda x: np.sum(tw * x), raw=True)
+    df_expression = df_expression.rolling(len(tw)).apply(
+        lambda x: np.sum(tw * x), raw=True
+    )
     df_expression = df_expression.fillna(-1)
     df_expression = pd.concat(
         [df_expression.idxmax(axis=1).astype(int), df_expression.max(axis=1)], axis=1
@@ -182,7 +184,6 @@ for csv_file in prediction_path.glob("*.csv"):
     df_expression["id"] = df_expression["id"].astype(int)
     print("\t ...done")
 
-
     # Valence / Arousal
     print("\t Valence / Arousal...")
 
@@ -196,7 +197,6 @@ for csv_file in prediction_path.glob("*.csv"):
     df_arousal["score"] = df["arousal"].fillna(0)
     df_arousal["conf"] = df["arousal"].notnull().astype(int)
     print("\t ...done")
-
 
     # Preprocess bounding boxes
     print("\t Bounding Boxes...")
@@ -218,7 +218,6 @@ for csv_file in prediction_path.glob("*.csv"):
     df_bb = df_bb.rename(index={x: f"Frame {x+1}" for x in df_bb.index})
     print("\t ...done")
 
-
     # Preprocess Landmarks
     print("\t Facial Landmarks...")
 
@@ -236,7 +235,6 @@ for csv_file in prediction_path.glob("*.csv"):
     df_lm = df_lm.applymap(lambda x: tuple(x.astype(int)))
     print("\t ...done")
 
-
     # Saving annotations in nova format
     session, role = csv_file.stem.split(".")[0].rsplit("-", 1)
 
@@ -248,10 +246,9 @@ for csv_file in prediction_path.glob("*.csv"):
         items=emotions_cat_items,
         out_dir=dataset_root / session,
     )
-
     to_nova(
         df_bb,
-        annotator="emonet",
+        annotator="system_emonet",
         role=role,
         scheme_name="bounding_box",
         scheme_type="POINT",
@@ -261,7 +258,7 @@ for csv_file in prediction_path.glob("*.csv"):
     )
     to_nova(
         df_lm,
-        annotator="emonet",
+        annotator="system_emonet",
         role=role,
         scheme_name="facial_landmarks",
         scheme_type="POINT",
@@ -271,7 +268,7 @@ for csv_file in prediction_path.glob("*.csv"):
     )
     to_nova(
         df_valence,
-        annotator="emonet",
+        annotator="system_emonet",
         role=role,
         scheme_name="valence25",
         scheme_type="CONTINUOUS",
@@ -280,7 +277,7 @@ for csv_file in prediction_path.glob("*.csv"):
     )
     to_nova(
         df_arousal,
-        annotator="emonet",
+        annotator="system_emonet",
         role=role,
         scheme_name="arousal25",
         scheme_type="CONTINUOUS",
